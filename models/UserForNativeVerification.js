@@ -1,0 +1,23 @@
+const mongoose = require("mongoose");
+
+const UserForNativeVerificationSchema = new mongoose.Schema({
+  userId: {
+    type: String,
+  },
+  uniqueString: {
+    type: String,
+  },
+  createdAt: {
+    type: Date,
+  },
+  expiredAt: {
+    type: Date,
+  },
+});
+
+const UserForNativeVerification = mongoose.model(
+  "UserForNativeVerification",
+  UserForNativeVerificationSchema
+);
+
+module.exports = UserForNativeVerification;
