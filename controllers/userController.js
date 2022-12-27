@@ -2,34 +2,18 @@ const {
   UserForNative,
   UserForNativeVerification,
   PasswordReset,
+  UserOTPVerification,
 } = require("../models");
 const { validationResult } = require("express-validator");
 const bcrypt = require("bcryptjs");
-const nodemailer = require("nodemailer");
 const { v4: uuidv4 } = require("uuid");
-const express = require("express");
-const router = express.Router();
 const path = require("path");
+const {
+  sendUserOTPVerification,
+} = require("./sendUserOTPVerification/controller");
+const sendMail = require("../utils/sendEmail");
+const saltRound = 10;
 function UserController() {}
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 465,
-  secure: true,
-  auth: {
-    user: "elizavetka.chizh@gmail.com",
-    pass: "qxxqmjzhpqvpqzcw",
-  },
-});
-
-transporter.verify((err, success) => {
-  if (err) {
-    console.log("bed");
-    console.log(err);
-  } else {
-    console.log(success);
-    console.log("good");
-  }
-}); //post date
 
 const sendVerificationEmail = ({ _id, email }, res) => {
   const currentUrl = "http://localhost:5500/";
@@ -48,7 +32,6 @@ const sendVerificationEmail = ({ _id, email }, res) => {
         `,
   };
 
-  const saltRound = 10;
   bcrypt
     .hash(uniqString, saltRound)
     .then((hashedUniqueString) => {
@@ -61,8 +44,7 @@ const sendVerificationEmail = ({ _id, email }, res) => {
       newVerification
         .save()
         .then(() => {
-          transporter
-            .sendMail(mailOptions)
+          sendMail(mailOptions)
             .then(() => {
               res.json({
                 status: "PENDING",
@@ -102,7 +84,6 @@ const verificationEmail = (req, res) => {
   UserForNativeVerification.find({ userId })
     .then((result) => {
       if (result.length > 0) {
-        console.log(`res1`, result);
         const { expiredAt } = result[0];
         const hashedUniqueString = result[0].uniqueString;
         if (expiredAt < Date.now()) {
@@ -130,9 +111,7 @@ const verificationEmail = (req, res) => {
           bcrypt
             .compare(uniqString, hashedUniqueString)
             .then((result) => {
-              console.log(result);
               if (result) {
-                console.log(result);
                 UserForNative.updateOne({ _id: userId }, { verified: true })
                   .then(() => {
                     UserForNativeVerification.deleteOne({ userId })
@@ -162,7 +141,6 @@ const verificationEmail = (req, res) => {
               }
             })
             .catch((error) => {
-              console.log(`err1`, error);
               let message =
                 "Время верификации истекло. Пожалуйста, зарегистрируйтесь или войдите";
               res.redirect(`/user/verified/error=true&message=${message}`);
@@ -201,87 +179,64 @@ const resendVerificationLink = async function (req, res) {
   }
 };
 
-const create = function (req, res) {
-  let { name, email, phone, password, confirmPassword } = req.body;
-  name = name.trim();
-  email = email.trim();
-  password = password.trim();
-  confirmPassword = confirmPassword.trim();
-  phone = phone.trim();
-
-  if (
-    (name === "",
-    phone === "",
-    email === "",
-    password === "",
-    confirmPassword === "")
-  ) {
-    res.json({
-      status: "FAILED",
-      message: "Заполните, пожалуйста, все поля",
-    });
-  } else if (!/^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$/.test(email)) {
-    res.json({ status: "FAILED", message: "Введите корректный email" });
-  } else if (phone.length < 13) {
-    res.json({ status: "FAILED", message: "Введите корректный телефон" });
-  } else if (password.length < 8) {
-    res.json({
-      status: "FAILED",
-      message: "Длина пароля должна быть не меньше 8 символов",
-    });
-  } else if (password !== confirmPassword) {
-    res.json({
-      status: "FAILED",
-      data: "Пароли не совпадают",
-    });
-  } else {
-    UserForNative.find({ email })
-      .then((result) => {
-        if (result.length) {
-          res.json({
-            status: "FAILED",
-            message: "Такой пользователь уже существует",
-          });
-        } else {
-          const saltRound = 10;
-          bcrypt.hash(password, saltRound).then((hashedPassword) => {
-            const newUser = new UserForNative({
-              name: name,
-              email: email,
-              phone: phone,
-              password: hashedPassword,
-              confirmPassword: hashedPassword,
-              verified: false,
-            });
-
-            newUser
-              .save()
-              .then((result) => {
-                sendVerificationEmail(result, res);
-                console.log(`res`, result);
-                // res.json({
-                //   status: "SUCCESS",
-                //   message: "SUCCESS",
-                //   data: result,
-                // });
-              })
-              .catch((err) => {
-                res.json({
-                  status: "FAILED",
-                  message:
-                    "произошла ошибка при сохранении учетной записи пользователя",
-                });
-              });
-          });
-        }
-      })
-      .catch((err) => {
-        console.log(err);
-        res.json({
-          status: "FAILED",
-          message: "произошла ошибка при хешировании пароля",
-        });
+const userOTPPost = async (req, res) => {
+  try {
+    let { userId, otp } = req.body;
+    if (!userId || !otp) {
+      throw Error("Не разрешены пустые значяения для кода");
+    } else {
+      const UserOTPVerificationRecords = await UserOTPVerification.find({
+        userId,
       });
+      if (UserOTPVerificationRecords.length <= 0) {
+        throw new Error("Не имеется доступа либо верификация уже прошла.");
+      } else {
+        const { expiresAt } = UserOTPVerificationRecords[0];
+        const hashedOTP = UserOTPVerificationRecords[0].otp;
+
+        if (expiresAt < Date.now()) {
+          await UserOTPVerification.deleteMany({ userId });
+          throw new Array(
+            "срок действия кода истек. Пожалуйста, отправьте еще раз"
+          );
+        } else {
+          const validOTP = await bcrypt.compare(otp, hashedOTP);
+
+          if (!validOTP) {
+            throw new Error("Указан неправильный код. Проверьте свою почту");
+          } else {
+            await UserForNative.updateOne({ _id: userId }, { verified: true });
+            await UserOTPVerification.deleteMany({ userId });
+            res.json({
+              status: "VERIFIED",
+              message: `Подтвержение почты прошло удачно`,
+            });
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.log(e);
+    res.json({ status: "FAILED", message: e.message });
+  }
+};
+
+const resendUserOTPVerification = async (req, res) => {
+  try {
+    let { userId, email } = req.body;
+    console.log(req.body);
+    if (!userId || !email) {
+      throw Error("Пустые данные пользователя");
+    } else {
+      await UserOTPVerification.deleteMany({ userId });
+      sendUserOTPVerification({ _id: userId, email }, res);
+    }
+  } catch (error) {
+    console.log(error);
+    res.json({
+      status: "FAILED",
+      message: "Ошибка в ссылке на верфикацию",
+    });
   }
 };
 
@@ -407,7 +362,6 @@ const login = async function (req, res) {
             bcrypt
               .compare(password, hashedPassword)
               .then((result) => {
-                console.log(`1`, result);
                 if (result) {
                   console.log(result);
                   res.json({
@@ -446,8 +400,8 @@ const login = async function (req, res) {
   }
 };
 
-const sendResetEmail = ({ _id, email }, redirectUrl, res) => {
-  const resetString = uuidv4 + _id;
+const sendResetEmail = ({ _id, email }, res) => {
+  const resetString = `${Math.floor(1000 + Math.random() * 9000)}`;
   PasswordReset.deleteMany({ userId: _id })
     .then((result) => {
       console.log(result);
@@ -458,18 +412,15 @@ const sendResetEmail = ({ _id, email }, redirectUrl, res) => {
         html: `
         <div style="padding:10px;border-style: ridge">
         <p>Новый парорль для входа в систему</p>
-        <p>Эта ссылка будет действовать 60 минут</p>
-            <p>Перейдите по этой <a href=${
-              redirectUrl + "/" + _id + "/" + resetString
-            }>ссылке</a></p>
+          <p>Код для подтверждения ${resetString}</p>
         `,
       };
-      const saltRound = 10;
       bcrypt
         .hash(resetString, saltRound)
         .then((hashedResetString) => {
           const newPasswordReset = new PasswordReset({
             userId: _id,
+            email: email,
             resetString: hashedResetString,
             createdAt: Date.now(),
             expiredAt: Date.now() + 3600000,
@@ -477,8 +428,7 @@ const sendResetEmail = ({ _id, email }, redirectUrl, res) => {
           newPasswordReset
             .save()
             .then(() => {
-              transporter
-                .sendMail(mailOptions)
+              sendMail(mailOptions)
                 .then(() => {
                   res.json({
                     status: "PENDING",
@@ -519,7 +469,7 @@ const sendResetEmail = ({ _id, email }, redirectUrl, res) => {
 };
 
 const requestPasswordReset = (req, res) => {
-  const { email, redirectUrl } = req.body;
+  const { email } = req.body;
   UserForNative.find({ email })
     .then((data) => {
       if (data.length) {
@@ -529,7 +479,7 @@ const requestPasswordReset = (req, res) => {
             message: "очта еще не была подтверждена. Проверьте свой ящик",
           });
         } else {
-          sendResetEmail(data[0], redirectUrl, res);
+          sendResetEmail(data[0], res);
         }
       } else {
         res.json({
@@ -548,41 +498,85 @@ const requestPasswordReset = (req, res) => {
 };
 
 const passwordReset = (req, res) => {
-  let { userId, resetString, newPassword } = req.body;
-
-  PasswordReset.find({ userId })
+  let { email, newPassword, resetString } = req.body;
+  PasswordReset.find({ email })
     .then((result) => {
       if (result.length > 0) {
         const { expiresAt } = result[0];
-        const hashedResetString = result[0].resetString
+        const hashedResetString = result[0].resetString;
         if (expiresAt < Date.now()) {
-          PasswordReset.deleteOne({ userId })
-            .then(()=>{
+          PasswordReset.deleteOne({ email })
+            .then(() => {
               res.json({
                 status: "FAILED",
                 message: "срок действия ссылки для сброса пароля истек",
               });
             })
             .catch((error) => {
+              console.log(error);
               res.json({
                 status: "FAILED",
                 message: "Ошибка при отправке пароля",
               });
             });
         } else {
-          bcrypt.compare(resetString, hashedResetString).then((result)=>{
-            if(result){
-            //!!!! ОТСЮДАААА
-            } else{ res.json({
-              status: "FAILED",
-              message: "Нет аккаунта с таким email",
-            });}
-          }).catch((error)=>{
-            console.log(error)})
-          res.json({
-            status: "FAILED",
-            message: "Нет аккаунта с таким email",
-          });
+          bcrypt
+            .compare(resetString, hashedResetString)
+            .then((result) => {
+              if (result) {
+                bcrypt
+                  .hash(newPassword, saltRound)
+                  .then((hashedNewPassword) => {
+                    UserForNative.updateOne(
+                      { email: email },
+                      { password: hashedNewPassword }
+                    )
+                      .then(() => {
+                        PasswordReset.deleteOne({ email })
+                          .then(() => {
+                            res.json({
+                              status: "SUCCESS",
+                              message: "пароль был удачно изменен",
+                            });
+                          })
+                          .catch((error) => {
+                            console.log(error);
+                            res.json({
+                              status: "FAILED",
+                              message:
+                                "произошла ошибка при завершении сброса пароля",
+                            });
+                          });
+                      })
+                      .catch((error) => {
+                        console.log(error);
+                        res.json({
+                          status: "FAILED",
+                          message: "Ошибка в обнолвении пароля пользователя",
+                        });
+                      });
+                  })
+                  .catch((error) => {
+                    console.log(error);
+                    res.json({
+                      status: "FAILED",
+                      message: "сравнение строк сброса пароля не удалось",
+                    });
+                  });
+              } else {
+                res.json({
+                  status: "FAILED",
+                  message: "переданы неверные данные для сброса пароля",
+                });
+              }
+            })
+            .catch((error) => {
+              console.log(error);
+              res.json({
+                status: "FAILED",
+                message: "сравнение строк сброса пароля не удалось",
+              });
+            });
         }
       } else {
         res.json({
@@ -601,7 +595,6 @@ const passwordReset = (req, res) => {
 };
 
 UserController.prototype = {
-  create,
   all,
   update,
   remove,
@@ -612,6 +605,8 @@ UserController.prototype = {
   resendVerificationLink,
   requestPasswordReset,
   passwordReset,
+  userOTPPost,
+  resendUserOTPVerification,
 };
 
 module.exports = UserController;
