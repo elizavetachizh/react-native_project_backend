@@ -262,7 +262,6 @@ const update = async function (req, res) {
   const errors = validationResult(req);
   //создание дданых
   const data = {
-    name: req.body.name,
     phone: req.body.phone,
     email: req.body.email,
     password: req.body.password,
@@ -326,7 +325,6 @@ const show = async function (req, res) {
   const id = req.params.id;
   try {
     const user = await UserForNative.findById(id);
-    console.log(user);
     res.json({
       status: true,
       data: { ...user._doc },

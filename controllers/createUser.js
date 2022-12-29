@@ -4,15 +4,14 @@ const {
 } = require("./sendUserOTPVerification/controller");
 const create = async function (req, res) {
   try {
-    let { name, email, phone, password, confirmPassword } = req.body;
-    name = name.trim();
+    let {  email, phone, password, confirmPassword } = req.body;
     email = email.trim();
     password = password.trim();
     confirmPassword = confirmPassword.trim();
     phone = phone.trim();
 
     if (
-      (name === "",
+      (
       phone === "",
       email === "",
       password === "",
@@ -29,7 +28,6 @@ const create = async function (req, res) {
       throw Error("Пароли не совпадают");
     } else {
       const newUser = await createNewUser({
-        name,
         phone,
         email,
         password,
@@ -39,7 +37,7 @@ const create = async function (req, res) {
       const emailData = await sendUserOTPVerification(newUser);
       res.json({
         status: "PENDING",
-        message: "ерификация почты отправлена",
+        message: "Верификация почты отправлена",
         data: emailData,
       });
     }
